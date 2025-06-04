@@ -1,0 +1,159 @@
+const SPREADSHEET_ID = "1mhOdtX-ZupcmfvuKkfSknWrBvPfd4akvNyzlWil9JFw";
+const DB_SHEET = "Transfer_response";
+const OPTION_SHEET = "Option";
+
+function doGet() {
+  return HtmlService.createHtmlOutputFromFile('index').setTitle("Material Transfer");
+}
+
+function getSheetData() {
+  try {
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const optionSheet = ss.getSheetByName(OPTION_SHEET);
+    const dbSheet = ss.getSheetByName(DB_SHEET);
+
+    if (!optionSheet || !dbSheet) {
+      console.error('One or both sheets not found!');
+      return null;
+    }
+
+    // === Option Sheet Data ===
+    const optionData = optionSheet.getDataRange().getValues();
+    const optionHeaders = optionData[0];
+    const clientIndex = optionHeaders.indexOf('Client Name');
+    const locationIndex = optionHeaders.indexOf('Location');
+    const stockIndex = optionHeaders.indexOf('Dosing Location/ Storing Location');
+    const productIndex = optionHeaders.indexOf('Product');
+
+    const structuredData = {};
+    const allStockLocations = new Set();
+
+    for (let i = 1; i < optionData.length; i++) {
+      const row = optionData[i];
+      const client = row[clientIndex];
+      const location = row[locationIndex];
+      const stock = row[stockIndex];
+      const product = row[productIndex];
+
+      if (!client || !location || !stock || !product) continue;
+
+      if (!structuredData[client]) structuredData[client] = {};
+      if (!structuredData[client][location]) structuredData[client][location] = {};
+      if (!structuredData[client][location][stock]) structuredData[client][location][stock] = [];
+
+      structuredData[client][location][stock].push(product);
+      allStockLocations.add(stock);
+    }
+
+    // === DB Sheet Data ===
+    const dbData = dbSheet.getDataRange().getValues();
+    const dbHeaders = dbData[0];
+    const dbRecords = [];
+
+    for (let i = 1; i < dbData.length; i++) {
+      const row = dbData[i];
+      const record = {};
+      for (let j = 0; j < dbHeaders.length; j++) {
+        record[dbHeaders[j]] = row[j];
+      }
+      dbRecords.push(record);
+    }
+
+    return {
+      data: structuredData,
+      allStockLocations: Array.from(allStockLocations),
+      records: dbRecords
+    };
+  } catch (err) {
+    console.error("Error in getSheetData:", err);
+    return null;
+  }
+}
+
+function submitForm(record) {
+  try {
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const sheet = ss.getSheetByName(DB_SHEET);
+    if (!sheet) throw new Error("DB sheet not found");
+
+    const headers = sheet.getDataRange().getValues()[0];
+    const idIndex = headers.indexOf("ID");
+
+    let isUpdate = false;
+    let rowIndexToUpdate = -1;
+
+    if (record.id) {
+      const data = sheet.getDataRange().getValues();
+      for (let i = 1; i < data.length; i++) {
+        if (data[i][idIndex] === record.id) {
+          isUpdate = true;
+          rowIndexToUpdate = i + 1;
+          break;
+        }
+      }
+    }
+
+    const timeStamp = new Date().toISOString();
+    const generatedId = record.id || `ID-${Date.now()}`;
+    const row = [
+      generatedId,
+      timeStamp,
+      record.client,
+      record.location,
+      record.from,
+      record.to,
+      Number(record.qty),
+      record.product
+    ];
+
+    if (isUpdate) {
+      sheet.getRange(rowIndexToUpdate, 1, 1, row.length).setValues([row]);
+    } else {
+      sheet.appendRow(row);
+    }
+
+    return getSheetData();
+  } catch (error) {
+    console.error("Error in submitForm:", error);
+    return null;
+  }
+}
+
+function deleteRecord(id) {
+  try {
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const sheet = ss.getSheetByName(DB_SHEET);
+    const data = sheet.getDataRange().getValues();
+    const header = data[0];
+    const idIndex = header.indexOf("ID");
+    const rowIndex = data.findIndex(row => row[idIndex] === id);
+    if (rowIndex !== -1) {
+      sheet.deleteRow(rowIndex + 1);
+    }
+    return getSheetData().records;
+  } catch (e) {
+    Logger.log("Error in deleteRecord: " + e.message);
+    return null;
+  }
+}
+
+function getRecordById(id) {
+  try {
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const sheet = ss.getSheetByName(DB_SHEET);
+    const data = sheet.getDataRange().getValues();
+    const header = data[0];
+    const idIndex = header.indexOf("ID");
+    const row = data.find(r => r[idIndex] === id);
+
+    if (row) {
+      const obj = {};
+      header.forEach((key, i) => obj[key.trim()] = row[i]);
+      return obj;
+    }
+    return null;
+  } catch (e) {
+    Logger.log("Error in getRecordById: " + e.message);
+    return null;
+  }
+}
